@@ -22,6 +22,33 @@ API_URLS = {
     'Arbitrum': 'https://api.arbiscan.io/api',
 }
 
+# Function to fetch transactions for a given blockchain chain and address
+def fetch_transactions(chain, address):
+    api_key = API_KEYS[chain]
+    api_url = API_URLS[chain]
+    url = f'{api_url}?module=account&action=txlist&address={address}&startblock=0&endblock=99999999&sort=asc&apikey={api_key}'
+    response = requests.get(url)
+    data = response.json()
+    return data['result'] if data['status'] == '1' else []
+
+# Function to fetch internal transactions
+def fetch_internal_transactions(chain, address):
+    api_key = API_KEYS[chain]
+    api_url = API_URLS[chain]
+    url = f'{api_url}?module=account&action=txlistinternal&address={address}&startblock=0&endblock=99999999&sort=asc&apikey={api_key}'
+    response = requests.get(url)
+    data = response.json()
+    return data['result'] if data['status'] == '1' else []
+
+# Function to fetch token transfers
+def fetch_token_transfers(chain, address):
+    api_key = API_KEYS[chain]
+    api_url = API_URLS[chain]
+    url = f'{api_url}?module=account&action=tokentx&address={address}&startblock=0&endblock=99999999&sort=asc&apikey={api_key}'
+    response = requests.get(url)
+    data = response.json()
+    return data['result'] if data['status'] == '1' else []
+
 # Function to fetch balances for a given blockchain chain and address
 def fetch_balances(chain, address):
     # Get the API key and URL for the specified chain
@@ -102,7 +129,7 @@ layout = [
     [sg.Text('Enter Wallet Addresses (one per line):')],
     [sg.Multiline(size=(60, 10), key='-WALLETS-')],
     [sg.Text('Select Chain:'), sg.Combo(['Ethereum', 'Avalanche', 'BASE', 'Optimism', 'Arbitrum'], default_value='Ethereum', key='-CHAIN-')],
-    [sg.Button('Fetch Balances'), sg.Button('Exit')]
+    [sg.Button('Fetch Balances'), sg.Button('Fetch Transactions'), sg.Button('Exit')]
 ]
 
 # Create the window
@@ -113,7 +140,7 @@ while True:
     event, values = window.read()
     if event == sg.WINDOW_CLOSED or event == 'Exit':
         break
-    
+
     if event == 'Fetch Balances':
         addresses = values['-WALLETS-'].strip().split('\n')
         selected_chain = values['-CHAIN-']
@@ -131,5 +158,41 @@ while True:
                 writer.writerow(row)
 
         sg.popup('Done', 'Balances have been written to wallet_balances.csv')
+
+    if event == 'Fetch Transactions':
+        addresses = values['-WALLETS-'].strip().split('\n')
+        selected_chain = values['-CHAIN-']
+
+        with open('transaction_report.csv', 'w', newline='') as f:
+            writer = csv.writer(f)
+            # Add 'wallet' to the header row
+            writer.writerow(['wallet', 'timestamp', 'hash', 'from', 'to', 'value', 'contractAddress', 'tokenName', 'tokenSymbol', 'amount'])  # Add more fields as needed
+            
+            # Fetch transactions for each address
+            for address in addresses:
+                all_transactions = []
+                
+                transactions = fetch_transactions(selected_chain, address)
+                internal_transactions = fetch_internal_transactions(selected_chain, address)
+                token_transfers = fetch_token_transfers(selected_chain, address)
+                
+                # Merge all types of transactions
+                all_transactions.extend(transactions)
+                all_transactions.extend(internal_transactions)
+                all_transactions.extend(token_transfers)
+
+                # Write transactions to the CSV file
+                for tx in all_transactions:
+                    timestamp = time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime(int(tx.get('timeStamp'))))
+                    # Determine the amount
+                    if tx.get('input', '0x')[:10] == '0xa9059cbb':  # This is the method ID for `transfer(address,uint256)` in ERC20
+                        amount = int(tx.get('input')[74:], 16) / 10 ** int(tx.get('tokenDecimal', 18))  # Decode the amount from the input data
+                    else:
+                        amount = int(tx.get('value')) / 10 ** 18  # Convert from wei to ether
+
+                    # Add 'address' to the row
+                    writer.writerow([address, timestamp, tx.get('hash'), tx.get('from'), tx.get('to'), tx.get('value'), tx.get('contractAddress'), tx.get('tokenName'), tx.get('tokenSymbol'), amount])
+
+        sg.popup('Done', 'Transactions have been written to transaction_report.csv')
 
 window.close()
