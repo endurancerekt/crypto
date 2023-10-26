@@ -27,12 +27,17 @@ def fetch_balances(chain, address):
     # Get the API key and URL for the specified chain
     api_key = API_KEYS[chain]
     api_url = API_URLS[chain]
-    balances = [] # List to store balance data
+    balances = []  # List to store balance data
 
     # Fetch the native coin balance
     url = f'{api_url}?module=account&action=balance&address={address}&tag=latest&apikey={api_key}'
     response = requests.get(url)
-    data = response.json()
+    try:
+        data = response.json()
+    except requests.exceptions.JSONDecodeError:
+        print(f'Failed to decode JSON for native coin balance: {response.text}')
+        return balances
+
     if data['status'] == '1':
         # Calculate the balance and add to the list
         coin_balance = int(data['result']) / 10 ** 18
@@ -41,40 +46,53 @@ def fetch_balances(chain, address):
     # Fetch token balances
     url = f'{api_url}?module=account&action=tokentx&address={address}&startblock=0&endblock=99999999&sort=asc&apikey={api_key}'
     response = requests.get(url)
-    print(response.text)
-
-
-    
-    if response.status_code != 200:
-        print(f'Failed to get data: {response.status_code}, {response.text}')
-        return balances
-
     try:
         data = response.json()
     except requests.exceptions.JSONDecodeError:
-        print(f'Failed to decode JSON from response: {response.text}')
+        print(f'Failed to decode JSON for token balances: {response.text}')
         return balances
 
-    data = response.json()
     if data['status'] == '1':
         seen_tokens = set()  # Track tokens that we've already seen
         for tx in data['result']:
-            # Get token details from the transaction
             token_name = tx.get('tokenName', 'Unknown')
             token_symbol = tx.get('tokenSymbol', 'Unknown')
             decimals = int(tx.get('tokenDecimal', 0))
             contract_address = tx['contractAddress']
 
-            # If this is a new token, fetch its balance
             if contract_address not in seen_tokens:
                 seen_tokens.add(contract_address)
                 url = f'{api_url}?module=account&action=tokenbalance&contractaddress={contract_address}&address={address}&tag=latest&apikey={api_key}'
                 response = requests.get(url)
-                token_data = response.json()
+                try:
+                    token_data = response.json()
+                except requests.exceptions.JSONDecodeError:
+                    print(f'Failed to decode JSON for specific token balance: {response.text}')
+                    continue
+
                 if token_data['status'] == '1':
-                    # Calculate the token balance and add to the list
                     token_balance = int(token_data['result']) / 10 ** decimals
                     balances.append([address, chain, token_name, token_balance])
+
+    # Fetch NFT balances (assuming ERC-721)
+    url = f'{api_url}?module=account&action=tokennfttx&address={address}&startblock=0&endblock=99999999&sort=asc&apikey={api_key}'
+    response = requests.get(url)
+    try:
+        nft_data = response.json()
+    except requests.exceptions.JSONDecodeError:
+        print(f'Failed to decode JSON for NFT data: {response.text}')
+        return balances
+
+    if nft_data['status'] == '1':
+        seen_nfts = set()
+        for tx in nft_data['result']:
+            contract_address = tx['contractAddress']
+            token_name = tx.get('tokenName', 'Unknown')
+            token_id = tx['tokenID']
+
+            if contract_address not in seen_nfts:
+                seen_nfts.add(contract_address)
+                balances.append([address, chain, f'NFT: {token_name}', token_id])
 
     time.sleep(1)  # Delay to avoid hitting rate limits
     return balances
